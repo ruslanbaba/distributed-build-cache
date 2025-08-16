@@ -1,0 +1,35 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: build-cache
+
+resources:
+- ../../base
+
+patchesStrategicMerge:
+- deployment-patch.yaml
+- config-patch.yaml
+
+images:
+- name: gcr.io/PROJECT_ID/build-cache-server
+  newTag: latest
+
+replicas:
+- name: build-cache-server
+  count: 5
+
+configMapGenerator:
+- name: build-cache-config
+  behavior: merge
+  literals:
+  - max-cache-size-gb=2000
+  - pruning-interval-hours=12
+  - retention-days=14
+
+patchesJson6902:
+- target:
+    group: apps
+    version: v1
+    kind: Deployment
+    name: build-cache-server
+  path: hpa-patch.yaml

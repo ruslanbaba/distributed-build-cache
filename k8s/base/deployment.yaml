@@ -1,0 +1,205 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: build-cache-server
+  namespace: build-cache
+  labels:
+    app: build-cache-server
+    version: v1.0.0
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: build-cache-server
+  template:
+    metadata:
+      labels:
+        app: build-cache-server
+        version: v1.0.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: build-cache-server
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+      containers:
+      - name: cache-server
+        image: gcr.io/PROJECT_ID/build-cache-server:v1.0.0
+        imagePullPolicy: Always
+        ports:
+        - name: grpc
+          containerPort: 8080
+          protocol: TCP
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
+        env:
+        - name: CACHE_SERVER_PORT
+          value: "8080"
+        - name: CACHE_METRICS_PORT
+          value: "9090"
+        - name: CACHE_STORAGE_PROJECT_ID
+          valueFrom:
+            configMapKeyRef:
+              name: build-cache-config
+              key: project-id
+        - name: CACHE_STORAGE_BUCKET_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: build-cache-config
+              key: bucket-name
+        - name: CACHE_PRUNING_MAX_CACHE_SIZE_GB
+          valueFrom:
+            configMapKeyRef:
+              name: build-cache-config
+              key: max-cache-size-gb
+        - name: CACHE_PRUNING_INTERVAL_HOURS
+          valueFrom:
+            configMapKeyRef:
+              name: build-cache-config
+              key: pruning-interval-hours
+        - name: CACHE_PRUNING_RETENTION_DAYS
+          valueFrom:
+            configMapKeyRef:
+              name: build-cache-config
+              key: retention-days
+        - name: CACHE_SECURITY_ENABLE_TLS
+          value: "true"
+        - name: GOOGLE_APPLICATION_CREDENTIALS
+          value: "/var/secrets/google/key.json"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          grpc:
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          grpc:
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 3
+        volumeMounts:
+        - name: google-cloud-key
+          mountPath: /var/secrets/google
+          readOnly: true
+        - name: tls-certs
+          mountPath: /etc/ssl/certs
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: google-cloud-key
+        secret:
+          secretName: google-cloud-key
+      - name: tls-certs
+        secret:
+          secretName: build-cache-tls
+      - name: tmp
+        emptyDir: {}
+      nodeSelector:
+        cloud.google.com/gke-nodepool: "build-cache-pool"
+      tolerations:
+      - key: "build-cache"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - build-cache-server
+              topologyKey: kubernetes.io/hostname
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: build-cache-server
+  namespace: build-cache
+  labels:
+    app: build-cache-server
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}'
+    cloud.google.com/backend-config: '{"default": "build-cache-backend-config"}'
+spec:
+  type: ClusterIP
+  ports:
+  - name: grpc
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  selector:
+    app: build-cache-server
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: build-cache-server
+  namespace: build-cache
+  annotations:
+    iam.gke.io/gcp-service-account: build-cache-server@PROJECT_ID.iam.gserviceaccount.com
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: build-cache-config
+  namespace: build-cache
+data:
+  project-id: "PROJECT_ID"
+  bucket-name: "PROJECT_ID-build-cache"
+  max-cache-size-gb: "1000"
+  pruning-interval-hours: "24"
+  retention-days: "30"
+
+---
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: build-cache-backend-config
+  namespace: build-cache
+spec:
+  healthCheck:
+    checkIntervalSec: 10
+    timeoutSec: 5
+    healthyThreshold: 1
+    unhealthyThreshold: 3
+    type: HTTP
+    requestPath: /health
+    port: 9090
+  connectionDraining:
+    drainingTimeoutSec: 60
+  timeoutSec: 3600
+  logging:
+    enable: true
+    sampleRate: 1.0
