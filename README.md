@@ -1,11 +1,11 @@
 # Distributed Build Cache System on GKE
 
-A production-grade, enterprise-level Bazel remote cache implementation running on Google Kubernetes Engine (GKE) with Google Cloud Storage (GCS) backend. This system accelerates iOS builds by 70% for 200+ mobile developers while implementing intelligent cache pruning logic that saves $12k/month in storage costs.
+A production-grade, enterprise-level Bazel remote cache implementation running on Google Kubernetes Engine (GKE) with Google Cloud Storage (GCS) backend. This system accelerates iOS builds supporting developers while implementing intelligent cache pruning logic. 
 
 ## 🚀 Key Features
 
-- **70% build acceleration** for iOS builds through intelligent caching
-- **$12k/month storage cost savings** via smart cache pruning
+- **Build acceleration** for iOS builds through intelligent caching
+- **Storage cost savings** via smart cache pruning
 - **Enterprise security** with Workload Identity, RBAC, and mTLS
 - **GKE Autopilot** for reduced operational overhead
 - **Helm-based deployment** for production-ready orchestration
@@ -28,38 +28,6 @@ A production-grade, enterprise-level Bazel remote cache implementation running o
 =======
 
 
-<<<<<<< HEAD
-## Performance Metrics
-
-- Supports 200+ concurrent mobile developers
-- Sub-100ms cache hit latency
-- 99.9% uptime SLA
-- Automatic cache eviction and lifecycle management
-
-=======
-
->>>>>>> f946387bd79e61204958505f98a078a6be0e8d63
-## Quick Start
-
-```bash
-# Deploy to GKE
-make deploy-staging
-make deploy-production
-
-# Monitor system health
-make monitor
-
-# Run tests
-make test-all
-```
-
-## Documentation
-
-- [Architecture Design](docs/architecture.md)
-- [Deployment Guide](docs/deployment.md)
-- [Security Overview](docs/security.md)
-- [Monitoring Setup](docs/monitoring.md)
-- [Troubleshooting](docs/troubleshooting.md)
 
 ## Cost Optimization
 
