@@ -13,21 +13,7 @@ This system provides a high-performance, scalable remote build cache for Bazel b
 - **Prometheus + Grafana** for monitoring and observability
 - **Istio** service mesh for security and traffic management
 
-## Key Features
 
-- ⚡ **70% build acceleration** for iOS builds
-- 💰 **$12k/month storage cost savings** through intelligent cache pruning
-- 🔒 **Enterprise security** with Workload Identity and RBAC
-- 📊 **Comprehensive monitoring** with metrics and alerting
-- 🚀 **Auto-scaling** based on workload demand
-- 🔄 **Multi-region support** for global teams
-
-## Performance Metrics
-
-- Supports 200+ concurrent mobile developers
-- Sub-100ms cache hit latency
-- 99.9% uptime SLA
-- Automatic cache eviction and lifecycle management
 
 ## Quick Start
 
