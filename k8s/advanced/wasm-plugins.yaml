@@ -1,0 +1,591 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wasm-plugin-config
+  namespace: distributed-build-cache
+  labels:
+    app: distributed-build-cache
+    component: wasm-plugins
+data:
+  wasm-enabled: "true"
+  plugin-registry: "gcr.io/PROJECT_ID/wasm-plugins"
+  plugin-cache-ttl: "3600s"
+  plugin-timeout: "10s"
+  
+  # Available WASM plugins
+  plugins-manifest: |
+    plugins:
+      - name: "cache-optimizer"
+        version: "v1.2.0"
+        description: "AI-powered cache optimization"
+        image: "gcr.io/PROJECT_ID/wasm-plugins/cache-optimizer:v1.2.0"
+        config:
+          optimization-algorithm: "reinforcement-learning"
+          update-interval: "300s"
+          confidence-threshold: 0.8
+      
+      - name: "request-router"
+        version: "v1.1.0"
+        description: "Intelligent request routing"
+        image: "gcr.io/PROJECT_ID/wasm-plugins/request-router:v1.1.0"
+        config:
+          routing-strategy: "latency-aware"
+          health-check-interval: "30s"
+          failover-threshold: 3
+      
+      - name: "compression-optimizer"
+        version: "v1.0.1"
+        description: "Dynamic content compression"
+        image: "gcr.io/PROJECT_ID/wasm-plugins/compression-optimizer:v1.0.1"
+        config:
+          algorithms: ["gzip", "brotli", "zstd"]
+          compression-level: "balanced"
+          min-size: 1024
+      
+      - name: "security-filter"
+        version: "v2.0.0"
+        description: "Real-time security filtering"
+        image: "gcr.io/PROJECT_ID/wasm-plugins/security-filter:v2.0.0"
+        config:
+          rate-limiting: true
+          ddos-protection: true
+          sql-injection-detection: true
+          xss-protection: true
+      
+      - name: "metrics-collector"
+        version: "v1.3.0"
+        description: "Advanced metrics collection"
+        image: "gcr.io/PROJECT_ID/wasm-plugins/metrics-collector:v1.3.0"
+        config:
+          metrics-interval: "10s"
+          custom-dimensions: ["user_agent", "geo_location", "build_type"]
+          sampling-rate: 0.1
+
+---
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+metadata:
+  name: wasm-enabled-istio
+  namespace: istio-system
+spec:
+  components:
+    pilot:
+      k8s:
+        env:
+        - name: PILOT_ENABLE_WORKLOAD_ENTRY_AUTOREGISTRATION
+          value: "true"
+        - name: EXTERNAL_ISTIOD
+          value: "true"
+  values:
+    pilot:
+      env:
+        PILOT_ENABLE_WASM_HTTP_FILTER: true
+        PILOT_ENABLE_WASM_TCP_FILTER: true
+    global:
+      proxy:
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+
+---
+apiVersion: extensions.istio.io/v1alpha1
+kind: WasmPlugin
+metadata:
+  name: cache-optimizer-plugin
+  namespace: distributed-build-cache
+spec:
+  selector:
+    matchLabels:
+      app: distributed-build-cache
+      component: cache-service
+  url: oci://gcr.io/PROJECT_ID/wasm-plugins/cache-optimizer:v1.2.0
+  phase: AUTHN
+  priority: 100
+  pluginConfig:
+    optimization_algorithm: "reinforcement-learning"
+    update_interval: "300s"
+    confidence_threshold: 0.8
+    metrics_endpoint: "http://prometheus:9090"
+    learning_rate: 0.01
+    exploration_rate: 0.1
+    reward_function: "cache_hit_rate_improvement"
+    state_features:
+      - "request_frequency"
+      - "artifact_size"
+      - "user_context"
+      - "time_of_day"
+      - "build_complexity"
+
+---
+apiVersion: extensions.istio.io/v1alpha1
+kind: WasmPlugin
+metadata:
+  name: request-router-plugin
+  namespace: distributed-build-cache
+spec:
+  selector:
+    matchLabels:
+      app: distributed-build-cache
+      component: edge-router
+  url: oci://gcr.io/PROJECT_ID/wasm-plugins/request-router:v1.1.0
+  phase: AUTHZ
+  priority: 200
+  pluginConfig:
+    routing_strategy: "latency-aware"
+    health_check_interval: "30s"
+    failover_threshold: 3
+    load_balancing_algorithm: "weighted_least_connections"
+    circuit_breaker:
+      max_failures: 5
+      recovery_time: "30s"
+      failure_threshold: 0.5
+    geo_routing:
+      enabled: true
+      preference: "closest_region"
+      fallback_regions: ["us-west1", "us-east1"]
+
+---
+apiVersion: extensions.istio.io/v1alpha1
+kind: WasmPlugin
+metadata:
+  name: compression-optimizer-plugin
+  namespace: distributed-build-cache
+spec:
+  selector:
+    matchLabels:
+      app: distributed-build-cache
+  url: oci://gcr.io/PROJECT_ID/wasm-plugins/compression-optimizer:v1.0.1
+  phase: AUTHZ
+  priority: 150
+  pluginConfig:
+    algorithms: ["gzip", "brotli", "zstd"]
+    compression_level: "balanced"
+    min_size: 1024
+    max_size: 104857600  # 100MB
+    content_types:
+      - "application/octet-stream"
+      - "application/x-tar"
+      - "application/x-gzip"
+      - "text/plain"
+    adaptive_compression:
+      enabled: true
+      cpu_threshold: 0.8
+      memory_threshold: 0.9
+      fallback_algorithm: "gzip"
+
+---
+apiVersion: extensions.istio.io/v1alpha1
+kind: WasmPlugin
+metadata:
+  name: security-filter-plugin
+  namespace: distributed-build-cache
+spec:
+  selector:
+    matchLabels:
+      app: distributed-build-cache
+  url: oci://gcr.io/PROJECT_ID/wasm-plugins/security-filter:v2.0.0
+  phase: AUTHN
+  priority: 50
+  pluginConfig:
+    rate_limiting:
+      enabled: true
+      requests_per_second: 100
+      burst_size: 200
+      key_extractor: "source_ip"
+    ddos_protection:
+      enabled: true
+      threshold: 1000
+      window: "60s"
+      action: "block"
+    threat_detection:
+      sql_injection: true
+      xss_protection: true
+      path_traversal: true
+      command_injection: true
+    whitelist:
+      ips:
+        - "10.0.0.0/8"
+        - "172.16.0.0/12"
+        - "192.168.0.0/16"
+      user_agents:
+        - "bazel-remote/*"
+        - "buildbot/*"
+        - "jenkins/*"
+
+---
+apiVersion: extensions.istio.io/v1alpha1
+kind: WasmPlugin
+metadata:
+  name: metrics-collector-plugin
+  namespace: distributed-build-cache
+spec:
+  selector:
+    matchLabels:
+      app: distributed-build-cache
+  url: oci://gcr.io/PROJECT_ID/wasm-plugins/metrics-collector:v1.3.0
+  phase: LOG
+  priority: 300
+  pluginConfig:
+    metrics_interval: "10s"
+    sampling_rate: 0.1
+    custom_dimensions:
+      - "user_agent"
+      - "geo_location"
+      - "build_type"
+      - "artifact_type"
+      - "cache_tier"
+    metrics:
+      - name: "wasm_request_duration"
+        type: "histogram"
+        description: "Request duration measured by WASM plugin"
+        buckets: [0.1, 0.5, 1.0, 2.5, 5.0, 10.0]
+      - name: "wasm_cache_decisions"
+        type: "counter"
+        description: "Cache decisions made by WASM plugin"
+        labels: ["decision_type", "confidence_level"]
+      - name: "wasm_compression_ratio"
+        type: "gauge"
+        description: "Compression ratio achieved"
+        labels: ["algorithm", "content_type"]
+    exporters:
+      - type: "prometheus"
+        endpoint: "http://prometheus:9090/api/v1/write"
+      - type: "jaeger"
+        endpoint: "http://jaeger-collector:14268/api/traces"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wasm-plugin-manager
+  namespace: distributed-build-cache
+  labels:
+    app: distributed-build-cache
+    component: wasm-plugin-manager
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: distributed-build-cache
+      component: wasm-plugin-manager
+  template:
+    metadata:
+      labels:
+        app: distributed-build-cache
+        component: wasm-plugin-manager
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9093"
+    spec:
+      serviceAccountName: cache-service-account
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+      - name: wasm-plugin-manager
+        image: gcr.io/PROJECT_ID/wasm-plugin-manager:v2.0.0
+        ports:
+        - containerPort: 8082
+          name: http
+        - containerPort: 9093
+          name: metrics
+        env:
+        - name: WASM_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: wasm-plugin-config
+              key: wasm-enabled
+        - name: PLUGIN_REGISTRY
+          valueFrom:
+            configMapKeyRef:
+              name: wasm-plugin-config
+              key: plugin-registry
+        - name: KUBERNETES_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: ISTIO_NAMESPACE
+          value: "istio-system"
+        volumeMounts:
+        - name: wasm-config
+          mountPath: /etc/wasm
+          readOnly: true
+        - name: plugin-cache
+          mountPath: /var/cache/wasm
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "300m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8082
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8082
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+      volumes:
+      - name: wasm-config
+        configMap:
+          name: wasm-plugin-config
+      - name: plugin-cache
+        emptyDir:
+          sizeLimit: 1Gi
+      nodeSelector:
+        node-type: standard
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: distributed-build-cache
+                  component: wasm-plugin-manager
+              topologyKey: kubernetes.io/hostname
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wasm-plugin-manager-service
+  namespace: distributed-build-cache
+  labels:
+    app: distributed-build-cache
+    component: wasm-plugin-manager
+spec:
+  type: ClusterIP
+  selector:
+    app: distributed-build-cache
+    component: wasm-plugin-manager
+  ports:
+  - name: http
+    port: 8082
+    targetPort: 8082
+    protocol: TCP
+  - name: metrics
+    port: 9093
+    targetPort: 9093
+    protocol: TCP
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: wasm-plugin-updater
+  namespace: distributed-build-cache
+  labels:
+    app: distributed-build-cache
+    component: wasm-plugin-updater
+spec:
+  schedule: "0 2 * * *" # Daily at 2 AM
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: distributed-build-cache
+            component: wasm-plugin-updater
+        spec:
+          serviceAccountName: cache-service-account
+          restartPolicy: OnFailure
+          containers:
+          - name: wasm-plugin-updater
+            image: gcr.io/PROJECT_ID/wasm-plugin-updater:v2.0.0
+            command: ["/bin/sh"]
+            args:
+            - -c
+            - |
+              echo "Starting WASM plugin update process..."
+              
+              # Check for plugin updates
+              /usr/local/bin/wasm-updater \
+                --registry=${PLUGIN_REGISTRY} \
+                --namespace=${KUBERNETES_NAMESPACE} \
+                --dry-run=false \
+                --update-strategy=rolling
+              
+              # Verify plugin health after updates
+              /usr/local/bin/wasm-updater \
+                --verify-health \
+                --timeout=300s
+              
+              echo "WASM plugin update completed!"
+            env:
+            - name: PLUGIN_REGISTRY
+              valueFrom:
+                configMapKeyRef:
+                  name: wasm-plugin-config
+                  key: plugin-registry
+            - name: KUBERNETES_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            resources:
+              requests:
+                memory: "128Mi"
+                cpu: "100m"
+              limits:
+                memory: "256Mi"
+                cpu: "200m"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wasm-plugin-examples
+  namespace: distributed-build-cache
+  labels:
+    app: distributed-build-cache
+    component: wasm-examples
+data:
+  # Example Rust WASM plugin for cache optimization
+  cache_optimizer.rs: |
+    use proxy_wasm::traits::*;
+    use proxy_wasm::types::*;
+    use serde_json::Value;
+    
+    #[no_mangle]
+    pub fn _start() {
+        proxy_wasm::set_log_level(LogLevel::Trace);
+        proxy_wasm::set_http_context(|_, _| -> Box<dyn HttpContext> {
+            Box::new(CacheOptimizer::default())
+        });
+    }
+    
+    #[derive(Default)]
+    struct CacheOptimizer {
+        config: Option<Value>,
+    }
+    
+    impl Context for CacheOptimizer {}
+    
+    impl HttpContext for CacheOptimizer {
+        fn on_http_request_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
+            // Analyze request patterns
+            if let Some(user_agent) = self.get_http_request_header("user-agent") {
+                if user_agent.contains("bazel") {
+                    self.set_http_request_header("x-cache-priority", Some("high"));
+                }
+            }
+            
+            // Add ML-based cache recommendations
+            if let Some(path) = self.get_http_request_header(":path") {
+                let cache_score = self.calculate_cache_score(&path);
+                self.set_http_request_header("x-cache-score", Some(&cache_score.to_string()));
+            }
+            
+            Action::Continue
+        }
+        
+        fn on_http_response_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
+            // Optimize cache headers based on content analysis
+            if let Some(content_type) = self.get_http_response_header("content-type") {
+                let ttl = self.optimize_ttl(&content_type);
+                self.set_http_response_header("cache-control", Some(&format!("max-age={}", ttl)));
+            }
+            
+            Action::Continue
+        }
+    }
+    
+    impl CacheOptimizer {
+        fn calculate_cache_score(&self, path: &str) -> f64 {
+            // Simple ML-like scoring algorithm
+            let mut score = 0.5;
+            
+            if path.contains("/artifacts/") {
+                score += 0.3;
+            }
+            if path.contains(".jar") || path.contains(".aar") {
+                score += 0.2;
+            }
+            if path.contains("/metadata/") {
+                score -= 0.1;
+            }
+            
+            score.min(1.0).max(0.0)
+        }
+        
+        fn optimize_ttl(&self, content_type: &str) -> u32 {
+            match content_type {
+                "application/octet-stream" => 86400, // 24 hours for artifacts
+                "application/json" => 3600,          // 1 hour for metadata
+                "text/plain" => 1800,                // 30 minutes for logs
+                _ => 3600,                           // Default 1 hour
+            }
+        }
+    }
+  
+  # Build script for WASM plugins
+  build-wasm.sh: |
+    #!/bin/bash
+    set -euo pipefail
+    
+    echo "Building WASM plugins..."
+    
+    # Install Rust and wasm32 target
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    source $HOME/.cargo/env
+    rustup target add wasm32-unknown-unknown
+    
+    # Install required tools
+    cargo install wasm-pack
+    
+    # Build cache optimizer plugin
+    cd /workspace/cache-optimizer
+    wasm-pack build --target web --out-dir pkg
+    
+    # Optimize WASM binary
+    wasm-opt -Oz -o pkg/cache_optimizer_bg.wasm pkg/cache_optimizer_bg.wasm
+    
+    # Package as OCI image
+    docker build -t gcr.io/PROJECT_ID/wasm-plugins/cache-optimizer:v1.2.0 .
+    docker push gcr.io/PROJECT_ID/wasm-plugins/cache-optimizer:v1.2.0
+    
+    echo "WASM plugin build completed!"
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: wasm-plugin-metrics
+  namespace: distributed-build-cache
+  labels:
+    app: distributed-build-cache
+    component: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: distributed-build-cache
+      component: wasm-plugin-manager
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_service_label_component]
+      targetLabel: component
+    - sourceLabels: [__meta_kubernetes_pod_label_plugin_name]
+      targetLabel: plugin_name
+    - sourceLabels: [__meta_kubernetes_pod_label_plugin_version]
+      targetLabel: plugin_version

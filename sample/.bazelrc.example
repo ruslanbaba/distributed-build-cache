@@ -1,0 +1,49 @@
+# Bazel Remote Cache Configuration
+# Copy this to your project's .bazelrc file
+
+# Remote cache configuration (HTTP)
+build --remote_cache=https://cache.example.com
+# Or for development using port-forward:
+# build --remote_cache=http://localhost:8080
+
+# Remote cache configuration (gRPC) - alternative to HTTP
+# build --remote_cache=grpcs://cache.example.com:9092
+# Or for development:
+# build --remote_cache=grpc://localhost:9092
+
+# Enable uploading local results to populate the cache
+build --remote_upload_local_results=true
+
+# Optional: Set remote instance name if configured
+build --remote_instance_name=build-cache
+
+# Enable remote download to get artifacts from cache
+build --remote_download_minimal
+
+# Optional: Use local disk cache as fallback
+build --disk_cache=~/.cache/bazel
+
+# Optional: Enable remote execution (if supported)
+# build --remote_executor=grpcs://cache.example.com:9092
+
+# Optional: Timeout settings
+build --remote_timeout=60s
+
+# Optional: Enable local fallback if remote fails
+build --remote_local_fallback=true
+
+# iOS/Apple specific optimizations (if applicable)
+# build --apple_platform_type=ios
+# build --ios_minimum_os=12.0
+
+# Performance optimizations
+build --jobs=auto
+build --experimental_remote_merkle_tree_cache
+build --experimental_remote_cache_compression
+
+# Authentication (if using basic auth)
+# build --remote_header=Authorization=Basic <base64-encoded-credentials>
+
+# Debugging (uncomment for troubleshooting)
+# build --remote_debug
+# build --verbose_failures

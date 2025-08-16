@@ -1,0 +1,15 @@
+apiVersion: v2
+name: bazel-remote
+version: 0.1.0
+appVersion: "2.5.0" # container tag for bazel-remote
+description: Bazel remote cache on GKE with GCS backend
+home: https://github.com/ruslanbaba/distributed-build-cache
+maintainers:
+- name: Build Cache Team
+  email: team@example.com
+keywords:
+- bazel
+- cache
+- build
+- gcs
+- kubernetes

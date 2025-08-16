@@ -1,0 +1,631 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: edge-computing-config
+  namespace: distributed-build-cache
+  labels:
+    app: distributed-build-cache
+    component: edge-computing
+data:
+  edge-enabled: "true"
+  edge-regions: "us-west1,us-east1,europe-west1,asia-southeast1"
+  edge-cache-size: "50Gi"
+  edge-sync-interval: "300s"
+  edge-health-check-interval: "30s"
+  
+  # Global CDN Configuration
+  cdn-provider: "google-cloud-cdn"
+  cdn-cache-control: "public, max-age=3600, s-maxage=86400"
+  cdn-compression: "gzip,br"
+  
+  # Edge Node Configuration
+  edge-nodes: |
+    - region: "us-west1"
+      endpoint: "cache-usw1.edge.company.com"
+      capacity: "100Gi"
+      priority: 1
+      geo-location: "37.4419,-122.1419" # San Francisco
+    - region: "us-east1" 
+      endpoint: "cache-use1.edge.company.com"
+      capacity: "100Gi"
+      priority: 1
+      geo-location: "40.7128,-74.0060" # New York
+    - region: "europe-west1"
+      endpoint: "cache-euw1.edge.company.com"
+      capacity: "75Gi"
+      priority: 2
+      geo-location: "52.5200,13.4050" # Berlin
+    - region: "asia-southeast1"
+      endpoint: "cache-ase1.edge.company.com"
+      capacity: "75Gi"
+      priority: 2
+      geo-location: "1.3521,103.8198" # Singapore
+  
+  # Content Distribution Strategy
+  distribution-strategy: |
+    strategy: "intelligent-routing"
+    algorithms:
+      - name: "geo-proximity"
+        weight: 0.4
+        description: "Route to nearest geographic location"
+      - name: "load-based"
+        weight: 0.3
+        description: "Route based on current load"
+      - name: "cache-hit-rate"
+        weight: 0.2
+        description: "Route to nodes with higher hit rates"
+      - name: "network-latency"
+        weight: 0.1
+        description: "Route based on network performance"
+  
+  # Replication Configuration
+  replication-config: |
+    replication-factor: 3
+    consistency-level: "eventual"
+    conflict-resolution: "last-write-wins"
+    sync-strategies:
+      - name: "hot-artifacts"
+        criteria: "access_frequency > 10/hour"
+        replication-factor: 4
+        sync-interval: "60s"
+      - name: "warm-artifacts"
+        criteria: "access_frequency > 1/hour"
+        replication-factor: 2
+        sync-interval: "300s"
+      - name: "cold-artifacts"
+        criteria: "access_frequency <= 1/hour"
+        replication-factor: 1
+        sync-interval: "3600s"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge-router
+  namespace: distributed-build-cache
+  labels:
+    app: distributed-build-cache
+    component: edge-router
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: distributed-build-cache
+      component: edge-router
+  template:
+    metadata:
+      labels:
+        app: distributed-build-cache
+        component: edge-router
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9091"
+    spec:
+      serviceAccountName: cache-service-account
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+      - name: edge-router
+        image: gcr.io/PROJECT_ID/edge-router:v2.0.0
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 9091
+          name: metrics
+        env:
+        - name: EDGE_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: edge-computing-config
+              key: edge-enabled
+        - name: EDGE_REGIONS
+          valueFrom:
+            configMapKeyRef:
+              name: edge-computing-config
+              key: edge-regions
+        - name: GOOGLE_CLOUD_PROJECT
+          value: "PROJECT_ID"
+        - name: REDIS_ADDR
+          value: "redis-service:6379"
+        - name: JAEGER_ENDPOINT
+          value: "http://jaeger-collector:14268/api/traces"
+        volumeMounts:
+        - name: edge-config
+          mountPath: /etc/edge
+          readOnly: true
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+      volumes:
+      - name: edge-config
+        configMap:
+          name: edge-computing-config
+      nodeSelector:
+        node-type: standard
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: distributed-build-cache
+                  component: edge-router
+              topologyKey: kubernetes.io/hostname
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: edge-node
+  namespace: distributed-build-cache
+  labels:
+    app: distributed-build-cache
+    component: edge-node
+spec:
+  selector:
+    matchLabels:
+      app: distributed-build-cache
+      component: edge-node
+  template:
+    metadata:
+      labels:
+        app: distributed-build-cache
+        component: edge-node
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9092"
+    spec:
+      serviceAccountName: cache-service-account
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+      - name: edge-node
+        image: gcr.io/PROJECT_ID/edge-node:v2.0.0
+        ports:
+        - containerPort: 8081
+          name: http
+          hostPort: 8081
+        - containerPort: 9092
+          name: metrics
+          hostPort: 9092
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: NODE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: EDGE_CACHE_SIZE
+          valueFrom:
+            configMapKeyRef:
+              name: edge-computing-config
+              key: edge-cache-size
+        - name: EDGE_SYNC_INTERVAL
+          valueFrom:
+            configMapKeyRef:
+              name: edge-computing-config
+              key: edge-sync-interval
+        volumeMounts:
+        - name: edge-cache-storage
+          mountPath: /var/cache/edge
+        - name: edge-config
+          mountPath: /etc/edge
+          readOnly: true
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "2"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8081
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+            add:
+            - NET_BIND_SERVICE
+          readOnlyRootFilesystem: false
+      volumes:
+      - name: edge-cache-storage
+        hostPath:
+          path: /var/cache/distributed-build-cache
+          type: DirectoryOrCreate
+      - name: edge-config
+        configMap:
+          name: edge-computing-config
+      tolerations:
+      - effect: NoSchedule
+        operator: Exists
+      - effect: NoExecute
+        operator: Exists
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: edge-router-service
+  namespace: distributed-build-cache
+  labels:
+    app: distributed-build-cache
+    component: edge-router
+  annotations:
+    cloud.google.com/load-balancer-type: "External"
+    networking.gke.io/load-balancer-type: "External"
+spec:
+  type: LoadBalancer
+  selector:
+    app: distributed-build-cache
+    component: edge-router
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+    protocol: TCP
+  - name: metrics
+    port: 9091
+    targetPort: 9091
+    protocol: TCP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: edge-node-service
+  namespace: distributed-build-cache
+  labels:
+    app: distributed-build-cache
+    component: edge-node
+spec:
+  type: ClusterIP
+  selector:
+    app: distributed-build-cache
+    component: edge-node
+  ports:
+  - name: http
+    port: 8081
+    targetPort: 8081
+    protocol: TCP
+  - name: metrics
+    port: 9092
+    targetPort: 9092
+    protocol: TCP
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: edge-routing
+  namespace: distributed-build-cache
+spec:
+  hosts:
+  - cache.company.com
+  gateways:
+  - edge-gateway
+  http:
+  - match:
+    - uri:
+        prefix: /edge/v2
+    route:
+    - destination:
+        host: edge-router-service
+        port:
+          number: 80
+      weight: 100
+    headers:
+      request:
+        add:
+          x-edge-enabled: "true"
+          x-routing-strategy: "intelligent"
+    timeout: 60s
+    retries:
+      attempts: 3
+      perTryTimeout: 20s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+  - match:
+    - uri:
+        prefix: /cache/v2
+    route:
+    - destination:
+        host: edge-router-service
+        port:
+          number: 80
+      weight: 80
+    - destination:
+        host: cache-service
+        port:
+          number: 8080
+      weight: 20
+    headers:
+      request:
+        add:
+          x-edge-fallback: "true"
+    fault:
+      delay:
+        percentage:
+          value: 0.1
+        fixedDelay: 100ms
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: edge-gateway
+  namespace: distributed-build-cache
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - cache.company.com
+    - "*.edge.company.com"
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    tls:
+      mode: SIMPLE
+      credentialName: edge-tls-certs
+    hosts:
+    - cache.company.com
+    - "*.edge.company.com"
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: edge-routing-dr
+  namespace: distributed-build-cache
+spec:
+  host: edge-router-service
+  trafficPolicy:
+    loadBalancer:
+      localityLbSetting:
+        enabled: true
+        distribute:
+        - from: "region1/*"
+          to:
+            "region1/*": 80
+            "region2/*": 20
+        - from: "region2/*"
+          to:
+            "region2/*": 80
+            "region1/*": 20
+        failover:
+        - from: region1
+          to: region2
+        - from: region2
+          to: region1
+    connectionPool:
+      tcp:
+        maxConnections: 100
+        connectTimeout: 30s
+      http:
+        http1MaxPendingRequests: 50
+        http2MaxRequests: 100
+        maxRequestsPerConnection: 10
+        maxRetries: 3
+        consecutiveGatewayErrors: 5
+        interval: 30s
+        baseEjectionTime: 30s
+    outlierDetection:
+      consecutiveGatewayErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cdn-config
+  namespace: distributed-build-cache
+  labels:
+    app: distributed-build-cache
+    component: cdn
+data:
+  # Google Cloud CDN Configuration
+  gcp-cdn-config.yaml: |
+    name: "distributed-build-cache-cdn"
+    description: "CDN for distributed build cache"
+    
+    # Cache settings
+    defaultTtl: 3600    # 1 hour
+    maxTtl: 86400       # 24 hours
+    clientTtl: 1800     # 30 minutes
+    
+    # Cache key policies
+    cacheKeyPolicy:
+      includeHost: true
+      includeProtocol: true
+      includeQueryString: true
+      queryStringWhitelist:
+        - "version"
+        - "platform"
+        - "architecture"
+    
+    # Compression
+    compression:
+      - "gzip"
+      - "brotli"
+    
+    # Geographic restrictions
+    geoRestrictions:
+      restrictionType: "none"
+    
+    # Security
+    securityPolicy:
+      rateLimiting:
+        requestsPerMinute: 1000
+        burstSize: 100
+      ddosProtection: true
+  
+  # Edge cache invalidation rules
+  invalidation-rules.yaml: |
+    rules:
+      - pattern: "/cache/v2/artifacts/*"
+        ttl: 3600
+        triggers:
+          - "artifact_update"
+          - "manual_invalidation"
+      - pattern: "/cache/v2/metadata/*"
+        ttl: 300
+        triggers:
+          - "metadata_update"
+          - "cache_eviction"
+      - pattern: "/health"
+        ttl: 30
+        triggers:
+          - "health_check_update"
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: edge-sync-job
+  namespace: distributed-build-cache
+  labels:
+    app: distributed-build-cache
+    component: edge-sync
+spec:
+  schedule: "*/5 * * * *" # Every 5 minutes
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: distributed-build-cache
+            component: edge-sync
+        spec:
+          serviceAccountName: cache-service-account
+          restartPolicy: OnFailure
+          containers:
+          - name: edge-sync
+            image: gcr.io/PROJECT_ID/edge-sync:v2.0.0
+            command: ["/bin/sh"]
+            args:
+            - -c
+            - |
+              echo "Starting edge synchronization..."
+              
+              # Sync hot artifacts to all edge nodes
+              /usr/local/bin/edge-sync \
+                --mode=hot-artifacts \
+                --replication-factor=4 \
+                --regions=all
+              
+              # Sync warm artifacts to regional edge nodes
+              /usr/local/bin/edge-sync \
+                --mode=warm-artifacts \
+                --replication-factor=2 \
+                --regions=regional
+              
+              # Clean up cold artifacts based on LRU policy
+              /usr/local/bin/edge-sync \
+                --mode=cleanup \
+                --policy=lru \
+                --max-age=7d
+              
+              echo "Edge synchronization completed!"
+            env:
+            - name: EDGE_REGIONS
+              valueFrom:
+                configMapKeyRef:
+                  name: edge-computing-config
+                  key: edge-regions
+            - name: REDIS_ADDR
+              value: "redis-service:6379"
+            resources:
+              requests:
+                memory: "256Mi"
+                cpu: "100m"
+              limits:
+                memory: "512Mi"
+                cpu: "200m"
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: edge-computing-metrics
+  namespace: distributed-build-cache
+  labels:
+    app: distributed-build-cache
+    component: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: distributed-build-cache
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_service_label_component]
+      targetLabel: component
+    - sourceLabels: [__meta_kubernetes_pod_node_name]
+      targetLabel: node
+    - sourceLabels: [__meta_kubernetes_pod_label_region]
+      targetLabel: region
+
+---
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: edge-ssl-certificate
+  namespace: distributed-build-cache
+spec:
+  domains:
+  - cache.company.com
+  - cache-usw1.edge.company.com
+  - cache-use1.edge.company.com
+  - cache-euw1.edge.company.com
+  - cache-ase1.edge.company.com

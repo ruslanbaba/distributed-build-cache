@@ -1,0 +1,65 @@
+global:
+  domain: "cache.example.com"
+  projectID: "YOUR_GCP_PROJECT_ID"
+
+replicaCount: 5
+
+gcs:
+  bucket: "bazel-cache-YOUR_PROJECT_ID-prod"
+
+resources:
+  requests:
+    cpu: "500m"
+    memory: "1Gi"
+  limits:
+    cpu: "2"
+    memory: "4Gi"
+
+autoscaling:
+  enabled: true
+  minReplicas: 5
+  maxReplicas: 50
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+auth:
+  basicAuth:
+    enabled: true
+    username: "cache"
+    # SECURITY: Password must be provided via secret
+    # kubectl create secret generic cache-auth-secret --from-literal=password=$(openssl rand -base64 32)
+    password: 
+      valueFrom:
+        secretKeyRef:
+          name: cache-auth-secret
+          key: password
+
+ingress:
+  enabled: true
+  annotations:
+    kubernetes.io/ingress.global-static-ip-name: "bazel-remote-ip"
+    kubernetes.io/ingress.class: "gce"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    cloud.google.com/load-balancer-type: "External"
+
+nodeSelector:
+  cloud.google.com/gke-nodepool: "cache-pool"
+
+tolerations:
+- key: "cache-dedicated"
+  operator: "Equal"
+  value: "true"
+  effect: "NoSchedule"
+
+affinity:
+  nodeAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      preference:
+        matchExpressions:
+        - key: cloud.google.com/gke-preemptible
+          operator: NotIn
+          values: ["true"]
+
+monitoring:
+  enabled: true

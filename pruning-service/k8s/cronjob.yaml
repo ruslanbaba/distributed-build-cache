@@ -1,0 +1,73 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: gcs-pruner
+  namespace: build-cache
+  labels:
+    app: gcs-pruner
+spec:
+  schedule: "30 3 * * *" # daily at 03:30 UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: gcs-pruner
+          annotations:
+            prometheus.io/scrape: "true"
+            prometheus.io/port: "9090"
+            prometheus.io/path: "/metrics"
+        spec:
+          serviceAccountName: pruner
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            fsGroup: 65532
+          containers:
+            - name: pruner
+              image: us-central1-docker.pkg.dev/YOUR_GCP_PROJECT_ID/build-cache/pruner:latest
+              imagePullPolicy: Always
+              env:
+                - name: GCP_PROJECT_ID
+                  value: "YOUR_GCP_PROJECT_ID"
+                - name: GCS_BUCKET
+                  value: "bazel-cache-YOUR_GCP_PROJECT_ID-dev" # This should be set dynamically
+                - name: MAX_TOTAL_BYTES
+                  value: "3000000000000" # 3 TB
+                - name: MIN_AGE
+                  value: "336h" # 14 days
+                - name: DELETE_BATCH_SIZE
+                  value: "1000"
+              ports:
+                - name: metrics
+                  containerPort: 9090
+                  protocol: TCP
+              livenessProbe:
+                httpGet:
+                  path: /health
+                  port: metrics
+                initialDelaySeconds: 30
+                periodSeconds: 30
+              readinessProbe:
+                httpGet:
+                  path: /health
+                  port: metrics
+                initialDelaySeconds: 5
+                periodSeconds: 10
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "256Mi"
+                limits:
+                  cpu: "500m"
+                  memory: "1Gi"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                  - ALL

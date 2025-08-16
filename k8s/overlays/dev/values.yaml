@@ -1,0 +1,41 @@
+global:
+  domain: ""
+  projectID: "YOUR_GCP_PROJECT_ID"
+
+replicaCount: 2
+
+gcs:
+  bucket: "bazel-cache-YOUR_PROJECT_ID-dev"
+
+resources:
+  requests:
+    cpu: "250m"
+    memory: "512Mi"
+  limits:
+    cpu: "1"
+    memory: "2Gi"
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+auth:
+  basicAuth:
+    enabled: true
+    username: "dev-cache"
+    # SECURITY: Password must be provided via secret
+    # kubectl create secret generic cache-auth-secret --from-literal=password=$(openssl rand -base64 32)
+    password: 
+      valueFrom:
+        secretKeyRef:
+          name: cache-auth-secret
+          key: password
+
+ingress:
+  enabled: false  # Use port-forward for dev
+
+monitoring:
+  enabled: true

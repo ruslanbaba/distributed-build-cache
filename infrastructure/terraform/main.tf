@@ -69,6 +69,41 @@ variable "max_node_count" {
   default     = 10
 }
 
+variable "network_name" {
+  description = "The name of the VPC network"
+  type        = string
+  default     = "vpc-build-cache"
+}
+
+variable "gcs_bucket" {
+  description = "The name of the GCS bucket for cache storage"
+  type        = string
+}
+
+variable "domain_name" {
+  description = "The domain name for the ingress (leave empty for IP-only access)"
+  type        = string
+  default     = ""
+}
+
+variable "environment" {
+  description = "The environment (dev, staging, production)"
+  type        = string
+  default     = "dev"
+}
+
+variable "enable_private_nodes" {
+  description = "Enable private nodes for the cluster"
+  type        = bool
+  default     = false
+}
+
+variable "authorized_networks" {
+  description = "List of authorized networks for cluster access"
+  type        = list(string)
+  default     = null
+}
+
 # Enable required APIs
 resource "google_project_service" "required_apis" {
   for_each = toset([
@@ -138,31 +173,37 @@ resource "google_container_cluster" "primary" {
   name     = var.cluster_name
   location = var.region
 
-  # Remove default node pool
-  remove_default_node_pool = true
-  initial_node_count       = 1
+  # Enable Autopilot mode
+  enable_autopilot = true
 
-  network    = google_compute_network.vpc.name
-  subnetwork = google_compute_subnetwork.subnet.name
+  # Networking configuration
+  network    = google_compute_network.vpc.self_link
+  subnetwork = google_compute_subnetwork.private.self_link
 
-  # Private cluster configuration
-  private_cluster_config {
-    enable_private_nodes    = true
-    enable_private_endpoint = false
-    master_ipv4_cidr_block  = "172.16.0.0/28"
-  }
-
-  # IP allocation policy
+  # IP allocation policy for VPC-native cluster
   ip_allocation_policy {
     cluster_secondary_range_name  = "pod-range"
     services_secondary_range_name = "service-range"
   }
 
+  # Private cluster configuration
+  private_cluster_config {
+    enable_private_nodes    = var.enable_private_nodes
+    enable_private_endpoint = false
+    master_ipv4_cidr_block  = "172.16.0.0/28"
+  }
+
   # Master authorized networks
-  master_authorized_networks_config {
-    cidr_blocks {
-      cidr_block   = "0.0.0.0/0"
-      display_name = "All networks"
+  dynamic "master_authorized_networks_config" {
+    for_each = var.authorized_networks != null ? [1] : []
+    content {
+      dynamic "cidr_blocks" {
+        for_each = var.authorized_networks
+        content {
+          cidr_block   = cidr_blocks.value
+          display_name = "Authorized network"
+        }
+      }
     }
   }
 
@@ -171,25 +212,9 @@ resource "google_container_cluster" "primary" {
     workload_pool = "${var.project_id}.svc.id.goog"
   }
 
-  # Add-ons
-  addons_config {
-    http_load_balancing {
-      disabled = false
-    }
-    horizontal_pod_autoscaling {
-      disabled = false
-    }
-    network_policy_config {
-      disabled = false
-    }
-    istio_config {
-      disabled = false
-    }
-  }
-
-  # Network policy
-  network_policy {
-    enabled = true
+  # Release channel for automatic updates
+  release_channel {
+    channel = "REGULAR"
   }
 
   # Maintenance window
@@ -202,15 +227,36 @@ resource "google_container_cluster" "primary" {
   # Monitoring and logging
   monitoring_config {
     enable_components = ["SYSTEM_COMPONENTS", "WORKLOADS"]
+    managed_prometheus {
+      enabled = true
+    }
   }
 
   logging_config {
     enable_components = ["SYSTEM_COMPONENTS", "WORKLOADS"]
   }
 
+  # Enable binary authorization
+  binary_authorization {
+    evaluation_mode = "PROJECT_SINGLETON_POLICY_ENFORCE"
+  }
+
+  # Enable shielded nodes
+  enable_shielded_nodes = true
+
+  # Cluster autoscaling
+  cluster_autoscaling {
+    enabled = true
+    auto_provisioning_defaults {
+      oauth_scopes = [
+        "https://www.googleapis.com/auth/cloud-platform",
+      ]
+    }
+  }
+
   depends_on = [
-    google_project_service.required_apis,
-    google_compute_subnetwork.subnet
+    google_project_service.container,
+    google_project_service.compute,
   ]
 }
 

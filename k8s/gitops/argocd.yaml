@@ -1,0 +1,199 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: build-cache-production
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/ruslanbaba/distributed-build-cache
+    targetRevision: main
+    path: k8s/overlays/production
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: build-cache
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+    - CreateNamespace=true
+    - PrunePropagationPolicy=foreground
+    - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  revisionHistoryLimit: 10
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: build-cache-monitoring
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/ruslanbaba/distributed-build-cache
+    targetRevision: main
+    path: k8s/monitoring
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-notifications-cm
+  namespace: argocd
+data:
+  service.slack: |
+    token: $slack-token
+    username: argocd
+    channel: build-cache-alerts
+  template.app-deployed: |
+    message: |
+      Application {{.app.metadata.name}} deployed successfully!
+      Sync Status: {{.app.status.sync.status}}
+      Health Status: {{.app.status.health.status}}
+      Repository: {{.app.spec.source.repoURL}}
+      Revision: {{.app.status.sync.revision}}
+  template.app-sync-failed: |
+    message: |
+      ⚠️ Application {{.app.metadata.name}} sync failed!
+      Sync Status: {{.app.status.sync.status}}
+      Message: {{.app.status.operationState.message}}
+  trigger.on-deployed: |
+    - when: app.status.operationState.phase in ['Succeeded'] and app.status.health.status == 'Healthy'
+      send: [app-deployed]
+  trigger.on-sync-failed: |
+    - when: app.status.operationState.phase in ['Error', 'Failed']
+      send: [app-sync-failed]
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: build-cache-vs
+  namespace: build-cache
+spec:
+  hosts:
+  - cache.example.com
+  gateways:
+  - istio-system/build-cache-gateway
+  http:
+  - match:
+    - uri:
+        prefix: /
+    route:
+    - destination:
+        host: build-cache-server
+        port:
+          number: 8080
+    retries:
+      attempts: 3
+      perTryTimeout: 30s
+    timeout: 300s
+    fault:
+      delay:
+        percentage:
+          value: 0.1
+        fixedDelay: 100ms
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: build-cache-gateway
+  namespace: istio-system
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    tls:
+      mode: SIMPLE
+      credentialName: build-cache-tls
+    hosts:
+    - cache.example.com
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - cache.example.com
+    tls:
+      httpsRedirect: true
+
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: build-cache-authz
+  namespace: build-cache
+spec:
+  selector:
+    matchLabels:
+      app: build-cache-server
+  rules:
+  - from:
+    - source:
+        principals: ["cluster.local/ns/build-cache/sa/build-cache-server"]
+  - to:
+    - operation:
+        methods: ["GET", "POST"]
+  - when:
+    - key: request.headers[authorization]
+      values: ["Bearer *"]
+
+---
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+metadata:
+  name: build-cache-istio
+  namespace: istio-system
+spec:
+  values:
+    pilot:
+      traceSampling: 1.0
+    global:
+      meshID: build-cache-mesh
+      meshConfig:
+        defaultConfig:
+          gatewayTopology:
+            numTrustedProxies: 2
+  components:
+    pilot:
+      k8s:
+        resources:
+          requests:
+            cpu: 500m
+            memory: 2048Mi
+        hpaSpec:
+          maxReplicas: 5
+          minReplicas: 1
+          scaleTargetRef:
+            apiVersion: apps/v1
+            kind: Deployment
+            name: istiod
+          metrics:
+          - type: Resource
+            resource:
+              name: cpu
+              target:
+                type: Utilization
+                averageUtilization: 80

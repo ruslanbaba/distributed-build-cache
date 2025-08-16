@@ -1,0 +1,16 @@
+{{- if and .Values.monitoring.enabled .Values.monitoring.podMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "bazel-remote.fullname" . }}
+  labels:
+    {{- include "bazel-remote.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "bazel-remote.selectorLabels" . | nindent 6 }}
+  podMetricsEndpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.monitoring.podMonitor.interval }}
+{{- end }}

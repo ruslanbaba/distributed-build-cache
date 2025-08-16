@@ -1,0 +1,200 @@
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: build-cache-runtime-security
+  namespace: build-cache
+  labels:
+    app.kubernetes.io/name: build-cache-security
+    app.kubernetes.io/component: runtime-protection
+spec:
+  # Monitor file system access for anomaly detection
+  kprobes:
+  - call: "security_file_open"
+    syscall: false
+    args:
+    - index: 0
+      type: "file"
+    - index: 1
+      type: "int"
+    selectors:
+    - matchNamespaces:
+      - namespace: "build-cache"
+    - matchArgs:
+      - index: 1
+        operator: "mask"
+        values:
+        - "64" # O_CREAT flag - detect file creation attempts
+    returnArgs:
+    - index: 0
+      type: "int"
+    returnArgsAction: "Post"
+
+  # Monitor network connections for unauthorized access
+  - call: "tcp_connect"
+    syscall: false
+    args:
+    - index: 0
+      type: "sock"
+    selectors:
+    - matchNamespaces:
+      - namespace: "build-cache"
+    - matchArgs:
+      - index: 0
+        operator: "daddr"
+        values:
+        - "!10.0.0.0/8"    # Alert on external connections
+        - "!172.16.0.0/12" # Allow internal cluster communication
+        - "!192.168.0.0/16"
+
+  # Monitor process execution for security violations
+  - call: "sys_execve"
+    syscall: true
+    args:
+    - index: 0
+      type: "string"
+    - index: 1
+      type: "string"
+    selectors:
+    - matchNamespaces:
+      - namespace: "build-cache"
+    - matchBinaries:
+      - operator: "In"
+        values:
+        - "/usr/bin/cache-server"
+        - "/usr/bin/pruner"
+        - "/usr/bin/bazel-remote"
+    - matchArgs:
+      - index: 0
+        operator: "NotIn"
+        values:
+        - "/bin/sh"
+        - "/bin/bash"
+        - "/usr/bin/curl"  # Block shell execution attempts
+
+  # Monitor privilege escalation attempts
+  - call: "commit_creds"
+    syscall: false
+    args:
+    - index: 0
+      type: "cred"
+    selectors:
+    - matchNamespaces:
+      - namespace: "build-cache"
+    - matchCapabilities:
+      - type: "Effective"
+        operator: "In"
+        isNamespaceCapability: false
+        values:
+        - "CAP_SYS_ADMIN"
+        - "CAP_SYS_PTRACE"
+        - "CAP_SYS_MODULE"
+
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: build-cache-zero-trust-l7
+  namespace: build-cache
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: bazel-remote
+  ingress:
+  # Allow gRPC traffic from authorized clients only
+  - fromEndpoints:
+    - matchLabels:
+        security.istio.io/tlsMode: istio
+        app.kubernetes.io/component: build-client
+    toPorts:
+    - ports:
+      - port: "9092"
+        protocol: TCP
+      rules:
+        l7proto: grpc
+        l7:
+        - grpcService: "build.bazel.remote.execution.v2.ContentAddressableStorage"
+          grpcMethod: "FindMissingBlobs"
+        - grpcService: "build.bazel.remote.execution.v2.ContentAddressableStorage"
+          grpcMethod: "BatchUpdateBlobs"
+        - grpcService: "build.bazel.remote.execution.v2.ByteStream"
+          grpcMethod: "Read"
+        - grpcService: "build.bazel.remote.execution.v2.ByteStream"
+          grpcMethod: "Write"
+
+  # Allow HTTP traffic with strict L7 filtering
+  - fromEndpoints:
+    - matchLabels:
+        security.istio.io/tlsMode: istio
+    toPorts:
+    - ports:
+      - port: "8080"
+        protocol: TCP
+      rules:
+        http:
+        # Cache operations
+        - method: "GET"
+          path: "/ac/.*"
+          headers:
+          - "User-Agent: bazel/*"
+        - method: "PUT"
+          path: "/ac/.*"
+          headers:
+          - "Content-Type: application/octet-stream"
+        - method: "GET"
+          path: "/cas/.*"
+        - method: "PUT"
+          path: "/cas/.*"
+        # Health and metrics
+        - method: "GET"
+          path: "/status"
+        - method: "GET"
+          path: "/metrics"
+
+  egress:
+  # Allow GCS access
+  - toFQDNs:
+    - matchName: "storage.googleapis.com"
+    - matchPattern: "*.storage.googleapis.com"
+    toPorts:
+    - ports:
+      - port: "443"
+        protocol: TCP
+
+  # Allow DNS resolution
+  - toEndpoints:
+    - matchLabels:
+        k8s:io.kubernetes.pod.namespace: kube-system
+        k8s:app: kube-dns
+    toPorts:
+    - ports:
+      - port: "53"
+        protocol: UDP
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tetragon-config
+  namespace: build-cache
+data:
+  tetragon.conf.d: |
+    {
+      "log-level": "info",
+      "log-format": "json",
+      "enable-k8s-api": true,
+      "enable-process-cred": true,
+      "enable-process-ns": true,
+      "kernel-symbols": "/proc/kallsyms",
+      "export-allowlist": [
+        "build-cache"
+      ],
+      "field-filters": [
+        {
+          "event_set": ["PROCESS_EXEC"],
+          "fields": {
+            "process.pod.namespace": ["build-cache"]
+          },
+          "action": "INCLUDE"
+        }
+      ]
+    }

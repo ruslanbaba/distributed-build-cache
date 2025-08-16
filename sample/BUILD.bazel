@@ -1,0 +1,11 @@
+cc_binary(
+    name = "hello",
+    srcs = ["main.cc"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "hello_test",
+    srcs = ["hello_test.cc"],
+    deps = ["//sample:hello"],
+)

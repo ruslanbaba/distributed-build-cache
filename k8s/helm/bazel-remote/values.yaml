@@ -1,0 +1,98 @@
+replicaCount: 2
+
+image:
+  repository: ghcr.io/buchgr/bazel-remote-cache
+  tag: latest
+  pullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+service:
+  type: ClusterIP
+  portHttp: 8080
+  portGrpc: 9092
+
+ingress:
+  enabled: true
+  className: "gce"
+  annotations:
+    kubernetes.io/ingress.global-static-ip-name: "bazel-remote-ip"
+    kubernetes.io/ingress.class: "gce"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  hosts:
+    - host: "{{ .Values.global.domain | default \"\" }}"
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: bazel-remote-tls
+      hosts:
+        - "{{ .Values.global.domain | default \"\" }}"
+
+global:
+  domain: ""
+  projectID: ""
+
+gcs:
+  bucket: ""
+
+auth:
+  basicAuth:
+    enabled: true
+    username: "cache"
+    password: "change-me"
+
+resources:
+  requests:
+    cpu: "500m"
+    memory: "1Gi"
+  limits:
+    cpu: "2"
+    memory: "4Gi"
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: bazel-remote
+        topologyKey: kubernetes.io/hostname
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+  prometheus.io/path: "/metrics"
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  fsGroup: 65534
+
+serviceAccount:
+  create: true
+  annotations:
+    iam.gke.io/gcp-service-account: bazel-remote@{{ .Values.global.projectID }}.iam.gserviceaccount.com
+
+monitoring:
+  enabled: true
+  podMonitor:
+    enabled: true
+    interval: 30s

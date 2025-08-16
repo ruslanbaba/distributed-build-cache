@@ -1,0 +1,105 @@
+name: CD - Bazel Remote
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'k8s/helm/**'
+      - '.github/workflows/cd-bazel-remote.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'development'
+        type: choice
+        options:
+          - development
+          - production
+
+env:
+  HELM_CHART_PATH: ./k8s/helm/bazel-remote
+
+jobs:
+  deploy-dev:
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'development')
+    runs-on: ubuntu-latest
+    environment: development
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: build-cache-dev
+          location: ${{ secrets.REGION }}
+
+      - name: Create namespace
+        run: |
+          kubectl create namespace build-cache --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy Helm chart
+        run: |
+          helm upgrade --install bazel-remote ${{ env.HELM_CHART_PATH }} \
+            --namespace build-cache \
+            --values k8s/overlays/dev/values.yaml \
+            --set gcs.bucket="bazel-cache-${{ secrets.GCP_PROJECT_ID }}-dev" \
+            --set global.projectID="${{ secrets.GCP_PROJECT_ID }}" \
+            --wait \
+            --timeout=600s
+
+      - name: Verify deployment
+        run: |
+          kubectl rollout status deployment/bazel-remote -n build-cache --timeout=300s
+          kubectl get pods,svc,ing -n build-cache
+
+  deploy-prod:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production'
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: build-cache-prod
+          location: ${{ secrets.REGION }}
+
+      - name: Create namespace
+        run: |
+          kubectl create namespace build-cache --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy Helm chart
+        run: |
+          helm upgrade --install bazel-remote ${{ env.HELM_CHART_PATH }} \
+            --namespace build-cache \
+            --values k8s/overlays/prod/values.yaml \
+            --set gcs.bucket="bazel-cache-${{ secrets.GCP_PROJECT_ID }}-prod" \
+            --set global.projectID="${{ secrets.GCP_PROJECT_ID }}" \
+            --wait \
+            --timeout=600s
+
+      - name: Verify deployment
+        run: |
+          kubectl rollout status deployment/bazel-remote -n build-cache --timeout=300s
+          kubectl get pods,svc,ing -n build-cache
