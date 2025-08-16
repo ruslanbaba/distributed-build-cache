@@ -2,7 +2,7 @@
 
 A production-grade, enterprise-level Bazel remote cache implementation running on Google Kubernetes Engine (GKE) with Google Cloud Storage (GCS) backend. This system accelerates iOS builds supporting developers while implementing intelligent cache pruning logic. 
 
-## 🚀 Key Features
+## Key Features
 
 - **Build acceleration** for iOS builds through intelligent caching
 - **Storage cost savings** via smart cache pruning
@@ -13,20 +13,6 @@ A production-grade, enterprise-level Bazel remote cache implementation running o
 - **GitOps ready** with ArgoCD integration
 - **SBOM generation and container signing** for supply chain security
 - **Multi-environment support** (dev, staging, production)
-
-## 📋 Prerequisites
-
-<<<<<<< HEAD
-- Google Cloud account with billing enabled
-- `gcloud` CLI authenticated and configured
-- Required tools:
-  ```bash
-  # macOS installation
-  brew install --cask google-cloud-sdk
-  brew install terraform kubectl helm cosign trivy go
-  ```
-=======
-
 
 
 ## Cost Optimization
